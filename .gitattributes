@@ -1,0 +1,11 @@
+# 统一行尾，避免 Windows 下 core.autocrlf 把 gradlew 变成 CRLF，
+# 导致 Linux / macOS / WSL 上克隆后无法执行。
+* text=auto
+gradlew text eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+*.jar binary
+*.png binary
+*.webp binary
+*.jks binary
+*.keystore binary

@@ -1,0 +1,2 @@
+-keep class com.ipjump.alerter.data.** { *; }
+-keep class com.ipjump.alerter.network.** { *; }
