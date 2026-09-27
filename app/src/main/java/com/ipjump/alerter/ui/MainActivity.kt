@@ -100,6 +100,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showBatteryHintIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            binding.batteryHint.visibility = android.view.View.GONE
+            binding.batteryButton.visibility = android.view.View.GONE
+            return
+        }
         val pm = getSystemService(POWER_SERVICE) as PowerManager
         val ignoring = pm.isIgnoringBatteryOptimizations(packageName)
         val visible = if (ignoring) android.view.View.GONE else android.view.View.VISIBLE
@@ -108,6 +113,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openBatterySettings() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
         val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
             data = Uri.parse("package:$packageName")
         }

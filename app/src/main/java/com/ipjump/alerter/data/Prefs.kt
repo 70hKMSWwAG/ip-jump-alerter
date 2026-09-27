@@ -69,7 +69,7 @@ class Prefs(context: Context) {
         private const val KEY_QUIET_ENABLED = "quiet_enabled"
         private const val KEY_QUIET_START = "quiet_start"
         private const val KEY_QUIET_END = "quiet_end"
-        const val MIN_INTERVAL = 5
+        const val MIN_INTERVAL = 1
         const val MAX_INTERVAL = 86400
     }
 }
