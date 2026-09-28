@@ -13,12 +13,13 @@ data class NetworkSnapshot(
 ) {
     fun label(): String {
         if (!connected) return "未连接"
-        val parts = mutableListOf<String>()
-        if (hasWifi) parts += "Wi-Fi"
-        if (hasCellular) parts += "蜂窝网络"
-        if (hasEthernet) parts += "有线"
-        if (hasVpn) parts += "VPN"
-        return if (parts.isEmpty()) "其他网络" else parts.joinToString(" + ")
+        val parts = buildList {
+            if (hasWifi) add("Wi-Fi")
+            if (hasCellular) add("蜂窝网络")
+            if (hasEthernet) add("有线")
+            if (hasVpn) add("VPN")
+        }
+        return parts.joinToString(" + ").ifEmpty { "其他网络" }
     }
 
     fun primaryType(): String {

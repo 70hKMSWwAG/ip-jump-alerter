@@ -76,16 +76,13 @@ class SettingsActivity : AppCompatActivity() {
         }
         binding.resetBaselineButton.setOnClickListener {
             lifecycleScope.launch {
-                val result = IpChecker.check(this@SettingsActivity, IpChecker.REASON_PERIODIC)
+                val result = IpChecker.check(this@SettingsActivity, IpChecker.REASON_MANUAL)
                 val ip = result.ip.ifBlank { prefs.lastKnownIp }
-                if (ip.isNotBlank()) {
-                    prefs.baselineIp = ip
-                    prefs.lastKnownIp = ip
-                    runOnUiThread {
-                        binding.manualBaseline.setText(ip)
-                        Toast.makeText(this@SettingsActivity, R.string.baseline_updated, Toast.LENGTH_SHORT).show()
-                    }
-                }
+                if (ip.isBlank()) return@launch
+                prefs.baselineIp = ip
+                prefs.lastKnownIp = ip
+                binding.manualBaseline.setText(ip)
+                Toast.makeText(this@SettingsActivity, R.string.baseline_updated, Toast.LENGTH_SHORT).show()
             }
         }
     }

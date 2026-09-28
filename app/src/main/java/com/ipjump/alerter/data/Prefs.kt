@@ -9,51 +9,94 @@ class Prefs(context: Context) {
 
     var darkMode: Boolean
         get() = sp.getBoolean(KEY_DARK_MODE, false)
-        set(value) = sp.edit().putBoolean(KEY_DARK_MODE, value).apply()
+        set(value) {
+            sp.edit().putBoolean(KEY_DARK_MODE, value).apply()
+        }
 
     var monitoringEnabled: Boolean
         get() = sp.getBoolean(KEY_MONITORING, false)
-        set(value) = sp.edit().putBoolean(KEY_MONITORING, value).apply()
+        set(value) {
+            sp.edit().putBoolean(KEY_MONITORING, value).commit()
+        }
 
     var baselineIp: String
         get() = sp.getString(KEY_BASELINE, "") ?: ""
-        set(value) = sp.edit().putString(KEY_BASELINE, value).apply()
+        set(value) {
+            sp.edit().putString(KEY_BASELINE, value).commit()
+        }
 
     var lastKnownIp: String
         get() = sp.getString(KEY_LAST_IP, "") ?: ""
-        set(value) = sp.edit().putString(KEY_LAST_IP, value).apply()
+        set(value) {
+            sp.edit().putString(KEY_LAST_IP, value).commit()
+        }
 
     var lastLocation: String
         get() = sp.getString(KEY_LAST_LOCATION, "") ?: ""
-        set(value) = sp.edit().putString(KEY_LAST_LOCATION, value).apply()
+        set(value) {
+            sp.edit().putString(KEY_LAST_LOCATION, value).commit()
+        }
 
     var lastChangeAt: Long
         get() = sp.getLong(KEY_LAST_CHANGE, 0L)
-        set(value) = sp.edit().putLong(KEY_LAST_CHANGE, value).apply()
+        set(value) {
+            sp.edit().putLong(KEY_LAST_CHANGE, value).commit()
+        }
 
     var intervalSeconds: Int
         get() = sp.getInt(KEY_INTERVAL, 30).coerceIn(MIN_INTERVAL, MAX_INTERVAL)
-        set(value) = sp.edit().putInt(KEY_INTERVAL, value.coerceIn(MIN_INTERVAL, MAX_INTERVAL)).apply()
+        set(value) {
+            sp.edit().putInt(KEY_INTERVAL, value.coerceIn(MIN_INTERVAL, MAX_INTERVAL)).commit()
+        }
 
     var ignoreVpn: Boolean
         get() = sp.getBoolean(KEY_IGNORE_VPN, false)
-        set(value) = sp.edit().putBoolean(KEY_IGNORE_VPN, value).apply()
+        set(value) {
+            sp.edit().putBoolean(KEY_IGNORE_VPN, value).apply()
+        }
 
     var wifiCellularOnly: Boolean
         get() = sp.getBoolean(KEY_WIFI_CELLULAR_ONLY, false)
-        set(value) = sp.edit().putBoolean(KEY_WIFI_CELLULAR_ONLY, value).apply()
+        set(value) {
+            sp.edit().putBoolean(KEY_WIFI_CELLULAR_ONLY, value).apply()
+        }
 
     var quietHoursEnabled: Boolean
         get() = sp.getBoolean(KEY_QUIET_ENABLED, false)
-        set(value) = sp.edit().putBoolean(KEY_QUIET_ENABLED, value).apply()
+        set(value) {
+            sp.edit().putBoolean(KEY_QUIET_ENABLED, value).apply()
+        }
 
     var quietStartHour: Int
         get() = sp.getInt(KEY_QUIET_START, 2)
-        set(value) = sp.edit().putInt(KEY_QUIET_START, value).apply()
+        set(value) {
+            sp.edit().putInt(KEY_QUIET_START, value).apply()
+        }
 
     var quietEndHour: Int
         get() = sp.getInt(KEY_QUIET_END, 6)
-        set(value) = sp.edit().putInt(KEY_QUIET_END, value).apply()
+        set(value) {
+            sp.edit().putInt(KEY_QUIET_END, value).apply()
+        }
+
+    fun persistObservedIp(ip: String, location: String, setBaselineIfEmpty: Boolean) {
+        val editor = sp.edit()
+            .putString(KEY_LAST_IP, ip)
+            .putString(KEY_LAST_LOCATION, location)
+        if (setBaselineIfEmpty && baselineIp.isBlank()) {
+            editor.putString(KEY_BASELINE, ip)
+        }
+        editor.commit()
+    }
+
+    fun persistIpChange(ip: String, location: String, changedAt: Long) {
+        sp.edit()
+            .putString(KEY_LAST_IP, ip)
+            .putString(KEY_LAST_LOCATION, location)
+            .putString(KEY_BASELINE, ip)
+            .putLong(KEY_LAST_CHANGE, changedAt)
+            .commit()
+    }
 
     companion object {
         private const val NAME = "ip_jump_prefs"

@@ -7,8 +7,16 @@ import com.ipjump.alerter.data.Prefs
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
-        if (Prefs(context).monitoringEnabled) {
+        val action = intent?.action ?: return
+        if (action != Intent.ACTION_BOOT_COMPLETED && action != Intent.ACTION_MY_PACKAGE_REPLACED) {
+            return
+        }
+        if (!Prefs(context).monitoringEnabled) return
+        val pending = goAsync()
+        try {
             MonitorScheduler.start(context)
+        } finally {
+            pending.finish()
         }
     }
 }
