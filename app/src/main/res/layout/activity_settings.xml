@@ -68,7 +68,7 @@
             android:orientation="vertical"
             android:padding="16dp">
 
-            <Switch
+            <androidx.appcompat.widget.SwitchCompat
                 android:id="@+id/darkModeSwitch"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -82,7 +82,7 @@
                 android:textColor="@color/ink_soft"
                 android:textSize="12sp" />
 
-            <Switch
+            <androidx.appcompat.widget.SwitchCompat
                 android:id="@+id/ignoreVpnSwitch"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -96,7 +96,7 @@
                 android:textColor="@color/ink_soft"
                 android:textSize="12sp" />
 
-            <Switch
+            <androidx.appcompat.widget.SwitchCompat
                 android:id="@+id/wifiCellularOnlySwitch"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -120,7 +120,7 @@
             android:orientation="vertical"
             android:padding="16dp">
 
-            <Switch
+            <androidx.appcompat.widget.SwitchCompat
                 android:id="@+id/quietHoursSwitch"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

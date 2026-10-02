@@ -2,11 +2,13 @@ package com.ipjump.alerter.ui
 
 import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -40,8 +42,10 @@ class MainActivity : AppCompatActivity() {
         requestNotifyPermission()
         bindClicks()
         refreshUi()
-        lifecycleScope.launch { IpChecker.check(this@MainActivity, IpChecker.REASON_PERIODIC) }
-            .invokeOnCompletion { runOnUiThread { refreshUi() } }
+        lifecycleScope.launch {
+            IpChecker.check(this@MainActivity, IpChecker.REASON_PERIODIC)
+            refreshUi()
+        }
     }
 
     override fun onResume() {
@@ -64,7 +68,7 @@ class MainActivity : AppCompatActivity() {
             binding.currentIp.text = getString(R.string.checking)
             lifecycleScope.launch {
                 IpChecker.check(this@MainActivity, IpChecker.REASON_PERIODIC)
-                runOnUiThread { refreshUi() }
+                refreshUi()
             }
         }
         binding.settingsButton.setOnClickListener {
@@ -94,20 +98,24 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun requestNotifyPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            notifyPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+            == PackageManager.PERMISSION_GRANTED
+        ) {
+            return
         }
+        notifyPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
     private fun showBatteryHintIfNeeded() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-            binding.batteryHint.visibility = android.view.View.GONE
-            binding.batteryButton.visibility = android.view.View.GONE
+            binding.batteryHint.visibility = View.GONE
+            binding.batteryButton.visibility = View.GONE
             return
         }
         val pm = getSystemService(POWER_SERVICE) as PowerManager
         val ignoring = pm.isIgnoringBatteryOptimizations(packageName)
-        val visible = if (ignoring) android.view.View.GONE else android.view.View.VISIBLE
+        val visible = if (ignoring) View.GONE else View.VISIBLE
         binding.batteryHint.visibility = visible
         binding.batteryButton.visibility = visible
     }

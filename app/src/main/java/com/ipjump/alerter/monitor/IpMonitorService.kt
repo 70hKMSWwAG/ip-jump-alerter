@@ -1,30 +1,33 @@
 package com.ipjump.alerter.monitor
 
-import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
-import android.os.IBinder
+import android.os.Build
+import android.os.SystemClock
+import androidx.lifecycle.LifecycleService
+import androidx.lifecycle.lifecycleScope
 import com.ipjump.alerter.data.Prefs
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
-class IpMonitorService : Service() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+class IpMonitorService : LifecycleService() {
     private var loopJob: Job? = null
+    private var debounceJob: Job? = null
     private var connectivityManager: ConnectivityManager? = null
     private var lastWifi = false
     private var lastCellular = false
     private var lastVpn = false
     private var callbackRegistered = false
+    private var lastNotifyIp: String? = null
+    private var lastNotifyInterval: Int? = null
 
     private val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
@@ -44,38 +47,28 @@ class IpMonitorService : Service() {
         super.onCreate()
         AlertNotifier.ensureChannels(this)
         val prefs = Prefs(this)
-        startForeground(
-            AlertNotifier.ID_MONITOR,
-            AlertNotifier.monitorNotification(this, prefs.lastKnownIp, prefs.intervalSeconds)
-        )
+        updateMonitorNotification(prefs.lastKnownIp, prefs.intervalSeconds, force = true)
         registerNetworkCallback()
-        startLoop()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        super.onStartCommand(intent, flags, startId)
         val prefs = Prefs(this)
         if (!prefs.monitoringEnabled) {
-            stopSelf()
+            stopMonitor()
             return START_NOT_STICKY
         }
-        startForeground(
-            AlertNotifier.ID_MONITOR,
-            AlertNotifier.monitorNotification(this, prefs.lastKnownIp, prefs.intervalSeconds)
-        )
+        updateMonitorNotification(prefs.lastKnownIp, prefs.intervalSeconds, force = true)
         restartLoop()
         return START_STICKY
     }
 
     override fun onDestroy() {
+        debounceJob?.cancel()
         loopJob?.cancel()
-        if (callbackRegistered) {
-            runCatching { connectivityManager?.unregisterNetworkCallback(callback) }
-            callbackRegistered = false
-        }
+        unregisterNetworkCallback()
         super.onDestroy()
     }
-
-    override fun onBind(intent: Intent?): IBinder? = null
 
     private fun registerNetworkCallback() {
         connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -92,38 +85,65 @@ class IpMonitorService : Service() {
         lastVpn = snap.hasVpn
     }
 
+    private fun unregisterNetworkCallback() {
+        if (!callbackRegistered) return
+        runCatching { connectivityManager?.unregisterNetworkCallback(callback) }
+        callbackRegistered = false
+    }
+
     private fun restartLoop() {
         loopJob?.cancel()
+        loopJob = null
         startLoop()
     }
 
     private fun startLoop() {
         if (loopJob?.isActive == true) return
-        loopJob = scope.launch {
+        loopJob = lifecycleScope.launch(Dispatchers.IO) {
             while (isActive) {
+                val startedAt = SystemClock.elapsedRealtime()
                 val prefs = Prefs(this@IpMonitorService)
                 if (!prefs.monitoringEnabled) {
-                    stopSelf()
+                    withContext(Dispatchers.Main.immediate) { stopMonitor() }
                     break
                 }
-                val result = IpChecker.check(this@IpMonitorService, IpChecker.REASON_PERIODIC)
+                val result = runCatching {
+                    IpChecker.check(this@IpMonitorService, IpChecker.REASON_PERIODIC)
+                }.getOrElse { CheckResult(skipped = true, message = "error") }
                 val ip = result.ip.ifBlank { prefs.lastKnownIp }
-                startForeground(
-                    AlertNotifier.ID_MONITOR,
-                    AlertNotifier.monitorNotification(
-                        this@IpMonitorService,
-                        ip,
-                        prefs.intervalSeconds
-                    )
-                )
-                delay(prefs.intervalSeconds * 1000L)
+                withContext(Dispatchers.Main.immediate) {
+                    updateMonitorNotification(ip, prefs.intervalSeconds)
+                }
+                val wait = prefs.intervalSeconds * 1000L - (SystemClock.elapsedRealtime() - startedAt)
+                if (wait > 0L) delay(wait)
             }
         }
     }
 
+    private fun stopMonitor() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
+        stopSelf()
+    }
+
+    private fun updateMonitorNotification(ip: String, interval: Int, force: Boolean = false) {
+        if (!force && ip == lastNotifyIp && interval == lastNotifyInterval) return
+        lastNotifyIp = ip
+        lastNotifyInterval = interval
+        startForeground(
+            AlertNotifier.ID_MONITOR,
+            AlertNotifier.monitorNotification(this, ip, interval)
+        )
+    }
+
     private fun onNetworkEvent() {
-        scope.launch {
-            delay(800)
+        debounceJob?.cancel()
+        debounceJob = lifecycleScope.launch(Dispatchers.IO) {
+            delay(NETWORK_DEBOUNCE_MS)
             val snap = NetworkSnapshot.capture(this@IpMonitorService)
             val reason = when {
                 snap.hasVpn != lastVpn -> IpChecker.REASON_VPN
@@ -134,9 +154,19 @@ class IpMonitorService : Service() {
             lastWifi = snap.hasWifi
             lastCellular = snap.hasCellular
             lastVpn = snap.hasVpn
-            if (Prefs(this@IpMonitorService).monitoringEnabled) {
+            if (!Prefs(this@IpMonitorService).monitoringEnabled) return@launch
+            val result = runCatching {
                 IpChecker.check(this@IpMonitorService, reason)
+            }.getOrElse { CheckResult(skipped = true, message = "error") }
+            val prefs = Prefs(this@IpMonitorService)
+            val ip = result.ip.ifBlank { prefs.lastKnownIp }
+            withContext(Dispatchers.Main.immediate) {
+                updateMonitorNotification(ip, prefs.intervalSeconds)
             }
         }
+    }
+
+    companion object {
+        private const val NETWORK_DEBOUNCE_MS = 800L
     }
 }

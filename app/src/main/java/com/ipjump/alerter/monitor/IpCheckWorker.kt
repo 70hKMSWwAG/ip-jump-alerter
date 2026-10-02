@@ -12,7 +12,13 @@ class IpCheckWorker(
     override suspend fun doWork(): Result {
         val prefs = Prefs(applicationContext)
         if (!prefs.monitoringEnabled) return Result.success()
-        IpChecker.check(applicationContext, IpChecker.REASON_PERIODIC)
-        return Result.success()
+        return runCatching {
+            val result = IpChecker.check(applicationContext, IpChecker.REASON_PERIODIC)
+            if (result.skipped && result.message == "lookup_failed") {
+                Result.retry()
+            } else {
+                Result.success()
+            }
+        }.getOrDefault(Result.retry())
     }
 }

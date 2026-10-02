@@ -10,6 +10,7 @@ import android.media.AudioAttributes
 import android.os.Build
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.ipjump.alerter.R
 import com.ipjump.alerter.ui.MainActivity
 
@@ -55,10 +56,10 @@ object AlertNotifier {
             .setSmallIcon(R.drawable.ic_stat_monitor)
             .setContentTitle(context.getString(R.string.monitor_notify_title))
             .setContentText(context.getString(R.string.monitor_notify_body, ip.ifBlank { "检测中" }, interval))
-            .setColor(context.getColor(R.color.accent))
-            .setColorized(true)
+            .setColor(ContextCompat.getColor(context, R.color.accent))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .setSilent(true)
             .setContentIntent(openApp(context))
             .build()
     }
@@ -78,8 +79,7 @@ object AlertNotifier {
             .setContentTitle(context.getString(R.string.notify_title))
             .setContentText("$oldIp → $newIp")
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-            .setColor(context.getColor(R.color.danger))
-            .setColorized(true)
+            .setColor(ContextCompat.getColor(context, R.color.danger))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setDefaults(NotificationCompat.DEFAULT_SOUND or NotificationCompat.DEFAULT_VIBRATE)
             .setAutoCancel(true)

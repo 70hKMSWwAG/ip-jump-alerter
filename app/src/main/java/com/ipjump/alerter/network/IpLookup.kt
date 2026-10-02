@@ -48,10 +48,23 @@ internal interface PublicIpApi {
 }
 
 object IpLookup {
+    private val IPV4_REGEX =
+        Regex("""^((25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(25[0-5]|2[0-4]\d|[01]?\d\d?)$""")
+
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(8, TimeUnit.SECONDS)
+        .writeTimeout(8, TimeUnit.SECONDS)
+        .callTimeout(12, TimeUnit.SECONDS)
         .followRedirects(true)
+        .addInterceptor { chain ->
+            chain.proceed(
+                chain.request().newBuilder()
+                    .header("User-Agent", "IpJumpAlerter/1.0")
+                    .header("Accept", "application/json, text/plain")
+                    .build()
+            )
+        }
         .build()
 
     private val api: PublicIpApi = Retrofit.Builder()
@@ -72,10 +85,13 @@ object IpLookup {
     private suspend fun fetchIpInfoIo(): IpInfo? {
         return runCatching {
             val res = api.getIpInfo("https://ipinfo.io/json")
-            if (!res.isSuccessful) return null
+            if (!res.isSuccessful) {
+                res.errorBody()?.close()
+                return null
+            }
             val body = res.body() ?: return null
             val ip = body.ip?.trim().orEmpty()
-            if (ip.isEmpty()) null else IpInfo(
+            if (!looksLikeIp(ip)) null else IpInfo(
                 ip = ip,
                 country = body.country.orEmpty(),
                 city = body.city.orEmpty(),
@@ -87,10 +103,13 @@ object IpLookup {
     private suspend fun fetchIpApiCo(): IpInfo? {
         return runCatching {
             val res = api.getIpApi("https://ipapi.co/json/")
-            if (!res.isSuccessful) return null
+            if (!res.isSuccessful) {
+                res.errorBody()?.close()
+                return null
+            }
             val body = res.body() ?: return null
             val ip = body.ip?.trim().orEmpty()
-            if (ip.isEmpty()) null else IpInfo(
+            if (!looksLikeIp(ip)) null else IpInfo(
                 ip = ip,
                 country = body.countryName.orEmpty(),
                 city = body.city.orEmpty(),
@@ -102,17 +121,49 @@ object IpLookup {
     private suspend fun fetchPlain(url: String): String? {
         return runCatching {
             val res = api.getText(url)
-            if (!res.isSuccessful) return null
-            val text = res.body()?.string()?.trim().orEmpty()
-            if (looksLikeIp(text)) text else null
+            res.body().use { body ->
+                if (!res.isSuccessful) {
+                    res.errorBody()?.close()
+                    return null
+                }
+                val text = body?.string()?.trim().orEmpty()
+                if (looksLikeIp(text)) text else null
+            }
         }.getOrNull()
     }
 
     fun looksLikeIp(value: String): Boolean {
         val v = value.trim()
         if (v.isEmpty() || v.length > 45) return false
-        val ipv4 = Regex("""^((25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(25[0-5]|2[0-4]\d|[01]?\d\d?)$""")
-        if (ipv4.matches(v)) return true
-        return v.contains(":") && v.all { it.isLetterOrDigit() || it == ':' || it == '.' }
+        if (IPV4_REGEX.matches(v)) return true
+        return looksLikeIpv6(v)
+    }
+
+    private fun looksLikeIpv6(value: String): Boolean {
+        val v = value.substringBefore('%')
+        if (!v.contains(':') || v.contains(":::")) return false
+        val doubleColon = v.contains("::")
+        if (doubleColon && v.indexOf("::") != v.lastIndexOf("::")) return false
+        val sides = if (doubleColon) v.split("::", limit = 2) else listOf(v)
+        val groups = sides.flatMap { side ->
+            if (side.isEmpty()) emptyList() else side.split(':')
+        }
+        if (groups.size > 8) return false
+        if (!doubleColon && groups.size != 8 && (groups.size != 7 || groups.lastOrNull()?.contains('.') != true)) {
+            return false
+        }
+        var ipv4Tail = false
+        for ((index, group) in groups.withIndex()) {
+            if (group.contains('.')) {
+                if (index != groups.lastIndex) return false
+                if (!IPV4_REGEX.matches(group)) return false
+                ipv4Tail = true
+            } else {
+                if (group.isEmpty() || group.length > 4) return false
+                if (group.any { !it.isDigit() && it !in 'a'..'f' && it !in 'A'..'F' }) return false
+            }
+        }
+        val effective = groups.size + if (ipv4Tail) 1 else 0
+        return if (doubleColon) effective <= 8 else effective == 8 || (ipv4Tail && groups.size == 7)
     }
 }
