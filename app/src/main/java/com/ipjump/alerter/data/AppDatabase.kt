@@ -29,7 +29,11 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "ip_jump.db"
-                ).addMigrations(MIGRATION_1_2).build().also { instance = it }
+                )
+                    .addMigrations(MIGRATION_1_2)
+                    .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
+                    .build()
+                    .also { instance = it }
             }
         }
     }

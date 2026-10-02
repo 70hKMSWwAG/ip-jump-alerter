@@ -35,8 +35,10 @@ class HistoryActivity : AppCompatActivity() {
         binding.historyList.layoutManager = LinearLayoutManager(this)
         binding.historyList.adapter = adapter
         binding.historyList.setHasFixedSize(true)
+        binding.historyList.setItemViewCacheSize(16)
+        binding.historyList.itemAnimator = null
         lifecycleScope.launch {
-            AppDatabase.get(this@HistoryActivity).ipChangeDao().observeAll().collectLatest { items ->
+            AppDatabase.get(this@HistoryActivity).ipChangeDao().observeRecent(200).collectLatest { items ->
                 adapter.submitList(items)
                 binding.emptyView.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
             }
@@ -50,23 +52,43 @@ class HistoryAdapter(
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
         val binding = ItemHistoryBinding.inflate(LayoutInflater.from(parent.context), parent, false)
-        return Holder(binding)
+        return Holder(binding, onClick)
     }
 
     override fun onBindViewHolder(holder: Holder, position: Int) {
-        holder.bind(getItem(position), onClick)
+        holder.bind(getItem(position))
     }
 
-    class Holder(private val binding: ItemHistoryBinding) : RecyclerView.ViewHolder(binding.root) {
-        fun bind(record: IpChangeRecord, onClick: (IpChangeRecord) -> Unit) {
+    class Holder(
+        private val binding: ItemHistoryBinding,
+        onClick: (IpChangeRecord) -> Unit
+    ) : RecyclerView.ViewHolder(binding.root) {
+        private var bound: IpChangeRecord? = null
+
+        init {
+            binding.root.setOnClickListener {
+                bound?.let(onClick)
+            }
+        }
+
+        fun bind(record: IpChangeRecord) {
+            bound = record
             binding.itemTime.text = IpChecker.formatTime(record.changedAt)
-            binding.itemIps.text = "${record.oldIp}  →  ${record.newIp}"
-            binding.itemMeta.text = listOf(
-                IpChecker.reasonLabel(record.reason),
-                record.networkType,
-                record.location
-            ).filter { it.isNotBlank() }.joinToString(" · ")
-            binding.root.setOnClickListener { onClick(record) }
+            binding.itemIps.text = record.oldIp + "  →  " + record.newIp
+            binding.itemMeta.text = formatMeta(record)
+        }
+    }
+
+    companion object {
+        fun formatMeta(record: IpChangeRecord): String {
+            val reason = IpChecker.reasonLabel(record.reason)
+            return when {
+                record.networkType.isNotBlank() && record.location.isNotBlank() ->
+                    "$reason · ${record.networkType} · ${record.location}"
+                record.networkType.isNotBlank() -> "$reason · ${record.networkType}"
+                record.location.isNotBlank() -> "$reason · ${record.location}"
+                else -> reason
+            }
         }
     }
 

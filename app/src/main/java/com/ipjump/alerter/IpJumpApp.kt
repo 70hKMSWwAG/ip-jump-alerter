@@ -10,7 +10,7 @@ class IpJumpApp : Application() {
     override fun onCreate() {
         super.onCreate()
         AppCompatDelegate.setDefaultNightMode(
-            if (Prefs(this).darkMode) AppCompatDelegate.MODE_NIGHT_YES
+            if (Prefs.get(this).darkMode) AppCompatDelegate.MODE_NIGHT_YES
             else AppCompatDelegate.MODE_NIGHT_NO
         )
         AlertNotifier.ensureChannels(this)

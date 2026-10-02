@@ -10,8 +10,9 @@ class IpCheckWorker(
     params: WorkerParameters
 ) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
-        val prefs = Prefs(applicationContext)
-        if (!prefs.monitoringEnabled) return Result.success()
+        if (!Prefs.get(applicationContext).monitoringEnabled) return Result.success()
+        if (IpMonitorService.running) return Result.success()
+        MonitorScheduler.ensure(applicationContext)
         IpChecker.check(applicationContext, IpChecker.REASON_PERIODIC)
         return Result.success()
     }

@@ -11,17 +11,19 @@ import com.ipjump.alerter.databinding.ActivitySettingsBinding
 import com.ipjump.alerter.monitor.IpChecker
 import com.ipjump.alerter.monitor.MonitorScheduler
 import com.ipjump.alerter.network.IpLookup
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 class SettingsActivity : AppCompatActivity() {
     private lateinit var binding: ActivitySettingsBinding
     private lateinit var prefs: Prefs
+    private var resetJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivitySettingsBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        prefs = Prefs(this)
+        prefs = Prefs.get(this)
         bindValues()
         bindEvents()
     }
@@ -75,14 +77,20 @@ class SettingsActivity : AppCompatActivity() {
             Toast.makeText(this, R.string.baseline_updated, Toast.LENGTH_SHORT).show()
         }
         binding.resetBaselineButton.setOnClickListener {
-            lifecycleScope.launch {
-                val result = IpChecker.check(this@SettingsActivity, IpChecker.REASON_MANUAL)
-                val ip = result.ip.ifBlank { prefs.lastKnownIp }
-                if (ip.isBlank()) return@launch
-                prefs.baselineIp = ip
-                prefs.lastKnownIp = ip
-                binding.manualBaseline.setText(ip)
-                Toast.makeText(this@SettingsActivity, R.string.baseline_updated, Toast.LENGTH_SHORT).show()
+            if (resetJob?.isActive == true) return@setOnClickListener
+            binding.resetBaselineButton.isEnabled = false
+            resetJob = lifecycleScope.launch {
+                try {
+                    val result = IpChecker.check(this@SettingsActivity, IpChecker.REASON_MANUAL)
+                    val ip = result.ip.ifBlank { prefs.lastKnownIp }
+                    if (ip.isBlank()) return@launch
+                    prefs.baselineIp = ip
+                    prefs.lastKnownIp = ip
+                    binding.manualBaseline.setText(ip)
+                    Toast.makeText(this@SettingsActivity, R.string.baseline_updated, Toast.LENGTH_SHORT).show()
+                } finally {
+                    binding.resetBaselineButton.isEnabled = true
+                }
             }
         }
     }
@@ -93,15 +101,19 @@ class SettingsActivity : AppCompatActivity() {
             Toast.makeText(this, R.string.invalid_interval, Toast.LENGTH_SHORT).show()
             return
         }
+        val previous = prefs.intervalSeconds
         prefs.intervalSeconds = value
         binding.intervalInput.setText(prefs.intervalSeconds.toString())
-        MonitorScheduler.restart(this)
+        if (previous != prefs.intervalSeconds) {
+            MonitorScheduler.restart(this)
+        }
         toastSaved()
     }
 
     private fun persistQuietHours() {
-        prefs.quietStartHour = binding.quietStart.text?.toString()?.toIntOrNull()?.coerceIn(0, 23) ?: 2
-        prefs.quietEndHour = binding.quietEnd.text?.toString()?.toIntOrNull()?.coerceIn(0, 23) ?: 6
+        val start = binding.quietStart.text?.toString()?.toIntOrNull()?.coerceIn(0, 23) ?: 2
+        val end = binding.quietEnd.text?.toString()?.toIntOrNull()?.coerceIn(0, 23) ?: 6
+        prefs.persistQuietHours(start, end)
     }
 
     private fun toastSaved() {

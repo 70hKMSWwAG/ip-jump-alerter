@@ -13,15 +13,21 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.ipjump.alerter.R
 import com.ipjump.alerter.ui.MainActivity
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 object AlertNotifier {
     const val CHANNEL_ALERT = "ip_jump_alert"
     const val CHANNEL_MONITOR = "ip_jump_monitor"
     const val ID_MONITOR = 1001
-    const val ID_ALERT = 1002
+    private val nextAlertId = AtomicInteger(0)
+    private val channelsReady = AtomicBoolean(false)
+    private val openAppIntent = AtomicReference<PendingIntent?>()
 
     fun ensureChannels(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        if (!channelsReady.compareAndSet(false, true)) return
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val alert = NotificationChannel(
             CHANNEL_ALERT,
@@ -85,15 +91,25 @@ object AlertNotifier {
             .setAutoCancel(true)
             .setContentIntent(openApp(context))
             .build()
-        manager.notify(ID_ALERT, notification)
+        val id = 2000 + (nextAlertId.getAndIncrement() and 0x3FF)
+        manager.notify(id, notification)
+    }
+
+    fun updateMonitor(context: Context, notification: Notification) {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(ID_MONITOR, notification)
     }
 
     private fun openApp(context: Context): PendingIntent {
-        val intent = Intent(context, MainActivity::class.java).apply {
+        openAppIntent.get()?.let { return it }
+        val app = context.applicationContext
+        val intent = Intent(app, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
-        return PendingIntent.getActivity(context, 0, intent, flags)
+        val pending = PendingIntent.getActivity(app, 0, intent, flags)
+        openAppIntent.compareAndSet(null, pending)
+        return openAppIntent.get() ?: pending
     }
 }

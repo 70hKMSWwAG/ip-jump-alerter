@@ -24,8 +24,12 @@ class IpMonitorService : LifecycleService() {
     private var connectivityManager: ConnectivityManager? = null
     private var callbackRegistered = false
     private var lastSnapshot: NetworkSnapshot? = null
+    private var lastCapsKey: Int = Int.MIN_VALUE
     private var lastNotifyIp: String? = null
     private var lastNotifyInterval: Int? = null
+    private var loopInterval: Int = 0
+    private var foregroundStarted = false
+    private lateinit var prefs: Prefs
 
     private val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
@@ -37,32 +41,38 @@ class IpMonitorService : LifecycleService() {
         }
 
         override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+            val key = capabilityKey(networkCapabilities)
+            if (key == lastCapsKey) return
+            lastCapsKey = key
             onNetworkEvent()
         }
     }
 
     override fun onCreate() {
         super.onCreate()
+        running = true
+        prefs = Prefs.get(this)
         AlertNotifier.ensureChannels(this)
-        val prefs = Prefs(this)
         updateMonitorNotification(prefs.lastKnownIp, prefs.intervalSeconds, force = true)
         registerNetworkCallback()
-        startLoop()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
-        val prefs = Prefs(this)
         if (!prefs.monitoringEnabled) {
             stopMonitor()
             return START_NOT_STICKY
         }
-        updateMonitorNotification(prefs.lastKnownIp, prefs.intervalSeconds, force = true)
-        restartLoop()
+        updateMonitorNotification(prefs.lastKnownIp, prefs.intervalSeconds)
+        val interval = prefs.intervalSeconds
+        if (loopJob?.isActive != true || loopInterval != interval) {
+            restartLoop()
+        }
         return START_STICKY
     }
 
     override fun onDestroy() {
+        running = false
         debounceJob?.cancel()
         loopJob?.cancel()
         unregisterNetworkCallback()
@@ -71,11 +81,15 @@ class IpMonitorService : LifecycleService() {
 
     private fun registerNetworkCallback() {
         connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val request = NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .build()
         runCatching {
-            connectivityManager?.registerNetworkCallback(request, callback)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                connectivityManager?.registerDefaultNetworkCallback(callback)
+            } else {
+                val request = NetworkRequest.Builder()
+                    .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    .build()
+                connectivityManager?.registerNetworkCallback(request, callback)
+            }
             callbackRegistered = true
         }
         lastSnapshot = NetworkSnapshot.capture(this)
@@ -95,21 +109,23 @@ class IpMonitorService : LifecycleService() {
 
     private fun startLoop() {
         if (loopJob?.isActive == true) return
+        loopInterval = prefs.intervalSeconds
         loopJob = lifecycleScope.launch(Dispatchers.IO) {
             while (isActive) {
                 val startedAt = SystemClock.elapsedRealtime()
-                val prefs = Prefs(this@IpMonitorService)
                 if (!prefs.monitoringEnabled) {
                     withContext(Dispatchers.Main.immediate) { stopMonitor() }
                     break
                 }
                 val result = IpChecker.check(this@IpMonitorService, IpChecker.REASON_PERIODIC)
+                val interval = prefs.intervalSeconds
+                loopInterval = interval
                 val ip = result.ip.ifBlank { prefs.lastKnownIp }
                 withContext(Dispatchers.Main.immediate) {
-                    updateMonitorNotification(ip, prefs.intervalSeconds)
+                    updateMonitorNotification(ip, interval)
                 }
-                val wait = prefs.intervalSeconds * 1000L - (SystemClock.elapsedRealtime() - startedAt)
-                if (wait > 0L) delay(wait)
+                val wait = interval * 1000L - (SystemClock.elapsedRealtime() - startedAt)
+                delay(wait.coerceAtLeast(500L))
             }
         }
     }
@@ -121,17 +137,30 @@ class IpMonitorService : LifecycleService() {
             @Suppress("DEPRECATION")
             stopForeground(true)
         }
+        foregroundStarted = false
         stopSelf()
     }
 
     private fun updateMonitorNotification(ip: String, interval: Int, force: Boolean = false) {
-        if (!force && ip == lastNotifyIp && interval == lastNotifyInterval) return
+        if (!force && foregroundStarted && ip == lastNotifyIp && interval == lastNotifyInterval) return
         lastNotifyIp = ip
         lastNotifyInterval = interval
-        startForeground(
-            AlertNotifier.ID_MONITOR,
-            AlertNotifier.monitorNotification(this, ip, interval)
-        )
+        val notification = AlertNotifier.monitorNotification(this, ip, interval)
+        if (!foregroundStarted) {
+            val started = runCatching {
+                startForeground(AlertNotifier.ID_MONITOR, notification)
+                true
+            }.getOrElse { error ->
+                if (error.javaClass.simpleName == "ForegroundServiceStartNotAllowedException") {
+                    false
+                } else {
+                    throw error
+                }
+            }
+            foregroundStarted = started
+            return
+        }
+        AlertNotifier.updateMonitor(this, notification)
     }
 
     private fun onNetworkEvent() {
@@ -142,15 +171,25 @@ class IpMonitorService : LifecycleService() {
             val previous = lastSnapshot
             if (previous == current) return@launch
             lastSnapshot = current
-            if (!Prefs(this@IpMonitorService).monitoringEnabled) return@launch
+            if (!prefs.monitoringEnabled) return@launch
             val reason = detectReason(previous, current)
             val result = IpChecker.check(this@IpMonitorService, reason)
-            val prefs = Prefs(this@IpMonitorService)
+            val interval = prefs.intervalSeconds
             val ip = result.ip.ifBlank { prefs.lastKnownIp }
             withContext(Dispatchers.Main.immediate) {
-                updateMonitorNotification(ip, prefs.intervalSeconds)
+                updateMonitorNotification(ip, interval)
             }
         }
+    }
+
+    private fun capabilityKey(caps: NetworkCapabilities): Int {
+        var key = 0
+        if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) key = key or 1
+        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) key = key or 2
+        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) key = key or 4
+        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) key = key or 8
+        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) key = key or 16
+        return key
     }
 
     private fun detectReason(
@@ -168,5 +207,9 @@ class IpMonitorService : LifecycleService() {
 
     companion object {
         private const val NETWORK_DEBOUNCE_MS = 800L
+
+        @Volatile
+        var running: Boolean = false
+            private set
     }
 }

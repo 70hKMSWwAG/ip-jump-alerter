@@ -11,10 +11,10 @@ class BootReceiver : BroadcastReceiver() {
         if (action != Intent.ACTION_BOOT_COMPLETED && action != Intent.ACTION_MY_PACKAGE_REPLACED) {
             return
         }
-        if (!Prefs(context).monitoringEnabled) return
+        if (!Prefs.get(context).monitoringEnabled) return
         val pending = goAsync()
         try {
-            MonitorScheduler.start(context)
+            MonitorScheduler.ensure(context)
         } finally {
             pending.finish()
         }

@@ -15,15 +15,40 @@ object MonitorScheduler {
     private const val UNIQUE_WORK = "ip_jump_periodic_check"
 
     fun ensure(context: Context) {
-        if (Prefs(context).monitoringEnabled) {
-            start(context)
-        }
+        val app = context.applicationContext
+        if (!Prefs.get(app).monitoringEnabled) return
+        startService(app)
+        enqueueWork(app)
     }
 
     fun start(context: Context) {
         val app = context.applicationContext
-        Prefs(app).monitoringEnabled = true
+        Prefs.get(app).monitoringEnabled = true
         startService(app)
+        enqueueWork(app)
+    }
+
+    fun stop(context: Context) {
+        val app = context.applicationContext
+        Prefs.get(app).monitoringEnabled = false
+        WorkManager.getInstance(app).cancelUniqueWork(UNIQUE_WORK)
+        app.stopService(Intent(app, IpMonitorService::class.java))
+    }
+
+    fun restart(context: Context) {
+        if (!Prefs.get(context).monitoringEnabled) return
+        val app = context.applicationContext
+        val intent = Intent(app, IpMonitorService::class.java)
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                app.startForegroundService(intent)
+            } else {
+                app.startService(intent)
+            }
+        }
+    }
+
+    private fun enqueueWork(app: Context) {
         val work = PeriodicWorkRequestBuilder<IpCheckWorker>(15, TimeUnit.MINUTES)
             .setConstraints(
                 Constraints.Builder()
@@ -34,25 +59,13 @@ object MonitorScheduler {
             .build()
         WorkManager.getInstance(app).enqueueUniquePeriodicWork(
             UNIQUE_WORK,
-            ExistingPeriodicWorkPolicy.UPDATE,
+            ExistingPeriodicWorkPolicy.KEEP,
             work
         )
     }
 
-    fun stop(context: Context) {
-        val app = context.applicationContext
-        Prefs(app).monitoringEnabled = false
-        WorkManager.getInstance(app).cancelUniqueWork(UNIQUE_WORK)
-        app.stopService(Intent(app, IpMonitorService::class.java))
-    }
-
-    fun restart(context: Context) {
-        if (Prefs(context).monitoringEnabled) {
-            start(context)
-        }
-    }
-
     private fun startService(context: Context) {
+        if (IpMonitorService.running) return
         val intent = Intent(context, IpMonitorService::class.java)
         runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

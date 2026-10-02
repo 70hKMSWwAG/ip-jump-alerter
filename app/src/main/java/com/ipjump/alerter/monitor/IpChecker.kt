@@ -23,6 +23,11 @@ object IpChecker {
     const val REASON_MANUAL = "manual"
 
     private val mutex = Mutex()
+    private val timeFormat = object : ThreadLocal<Pair<SimpleDateFormat, Date>>() {
+        override fun initialValue(): Pair<SimpleDateFormat, Date> {
+            return SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()) to Date()
+        }
+    }
 
     suspend fun check(context: Context, reason: String): CheckResult = mutex.withLock {
         withContext(Dispatchers.IO) {
@@ -31,19 +36,20 @@ object IpChecker {
     }
 
     private suspend fun performCheck(app: Context, reason: String): CheckResult {
-        val prefs = Prefs(app)
+        val prefs = Prefs.get(app)
         val network = NetworkSnapshot.capture(app)
         if (!network.connected) {
             return CheckResult(skipped = true, message = "offline", network = network)
         }
 
-        val info = IpLookup.fetch() ?: return CheckResult(
+        val previous = prefs.lastKnownIp.ifBlank { prefs.baselineIp }
+        val refreshLocation = prefs.lastLocation.isBlank() || prefs.lastLocation == "未知"
+        val info = IpLookup.fetch(previous, refreshLocation) ?: return CheckResult(
             skipped = true,
             message = "lookup_failed",
             network = network
         )
-        val location = info.locationLabel()
-        val previous = prefs.lastKnownIp.ifBlank { prefs.baselineIp }
+        val location = resolveLocation(info.locationLabel(), previous, info.ip, prefs.lastLocation)
         val changed = previous.isNotBlank() && previous != info.ip
 
         if (!changed) {
@@ -90,6 +96,17 @@ object IpChecker {
         )
     }
 
+    private fun resolveLocation(
+        lookedUp: String,
+        previousIp: String,
+        currentIp: String,
+        stored: String
+    ): String {
+        if (lookedUp != "未知") return lookedUp
+        if (previousIp == currentIp && stored.isNotBlank()) return stored
+        return lookedUp
+    }
+
     private fun shouldAlert(prefs: Prefs, reason: String): Boolean {
         if (!prefs.monitoringEnabled) return false
         if (reason == REASON_MANUAL) return false
@@ -120,7 +137,9 @@ object IpChecker {
 
     fun formatTime(ts: Long): String {
         if (ts <= 0L) return "从未"
-        return SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(ts))
+        val pair = timeFormat.get()!!
+        pair.second.time = ts
+        return pair.first.format(pair.second)
     }
 
     fun reasonLabel(reason: String): String = when (reason) {

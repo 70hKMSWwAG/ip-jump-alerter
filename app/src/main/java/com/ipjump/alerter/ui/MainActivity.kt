@@ -2,6 +2,7 @@ package com.ipjump.alerter.ui
 
 import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -19,11 +20,14 @@ import com.ipjump.alerter.databinding.ActivityMainBinding
 import com.ipjump.alerter.monitor.IpChecker
 import com.ipjump.alerter.monitor.MonitorScheduler
 import com.ipjump.alerter.monitor.NetworkSnapshot
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var prefs: Prefs
+    private var checkJob: Job? = null
+    private var lastUiKey: String? = null
 
     private val notifyPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -37,13 +41,12 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        prefs = Prefs(this)
+        prefs = Prefs.get(this)
         requestNotifyPermission()
         bindClicks()
         refreshUi()
-        lifecycleScope.launch {
-            IpChecker.check(this@MainActivity, IpChecker.REASON_MANUAL)
-            refreshUi()
+        if (prefs.lastKnownIp.isBlank()) {
+            runCheck(showChecking = true)
         }
     }
 
@@ -64,11 +67,7 @@ class MainActivity : AppCompatActivity() {
             refreshUi()
         }
         binding.checkNowButton.setOnClickListener {
-            binding.currentIp.text = getString(R.string.checking)
-            lifecycleScope.launch {
-                IpChecker.check(this@MainActivity, IpChecker.REASON_MANUAL)
-                refreshUi()
-            }
+            runCheck(showChecking = true)
         }
         binding.settingsButton.setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
@@ -79,12 +78,32 @@ class MainActivity : AppCompatActivity() {
         binding.batteryButton.setOnClickListener { openBatterySettings() }
     }
 
+    private fun runCheck(showChecking: Boolean) {
+        if (checkJob?.isActive == true) return
+        if (showChecking) {
+            binding.currentIp.text = getString(R.string.checking)
+        }
+        binding.checkNowButton.isEnabled = false
+        checkJob = lifecycleScope.launch {
+            try {
+                IpChecker.check(this@MainActivity, IpChecker.REASON_MANUAL)
+                refreshUi()
+            } finally {
+                binding.checkNowButton.isEnabled = true
+            }
+        }
+    }
+
     private fun refreshUi() {
         val running = prefs.monitoringEnabled
+        val network = NetworkSnapshot.capture(this).label()
+        val key = "${prefs.lastKnownIp}|${prefs.baselineIp}|${prefs.lastLocation}|$network|${prefs.lastChangeAt}|$running"
+        if (key == lastUiKey) return
+        lastUiKey = key
         binding.currentIp.text = prefs.lastKnownIp.ifBlank { getString(R.string.unknown) }
         binding.baselineIp.text = prefs.baselineIp.ifBlank { getString(R.string.unknown) }
         binding.locationText.text = prefs.lastLocation.ifBlank { getString(R.string.unknown) }
-        binding.networkType.text = NetworkSnapshot.capture(this).label()
+        binding.networkType.text = network
         binding.lastChange.text = IpChecker.formatTime(prefs.lastChangeAt).replace(" ", "\n")
         binding.statusChip.text = getString(if (running) R.string.status_running else R.string.status_stopped)
         binding.statusChip.setBackgroundResource(
@@ -97,9 +116,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun requestNotifyPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            notifyPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+            == PackageManager.PERMISSION_GRANTED
+        ) {
+            return
         }
+        notifyPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
     private fun showBatteryHintIfNeeded() {
